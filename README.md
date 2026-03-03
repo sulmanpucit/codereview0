@@ -1,16 +1,19 @@
 # codereview
 
-**Don't just review the lines that changed. Understand why they matter.**
+**Code review that actually reads the code.**  
 
-AI-powered code reviews that go beyond the diff, using Claude to catch bugs, security issues, and design problems a surface-level review would miss.
+Claude-powered reviews for GitHub PRs and local branches. Thorough, configurable, and ready when you are.
 
-- 🔍 **PR reviews** - point it at any GitHub PR and get a detailed review in seconds
-- 🌳 **Local branch diffs** - review changes before you even open a PR, fully offline
-- 🧠 **Deep mode** - optionally clones the repo and explores cross-file impacts
-- 💬 **Post to GitHub** - adds review comments directly on the PR (as pending, so you stay in control)
-- 📄 **HTML reports** - generates standalone diff reports with inline annotations
+- 🔍 **PR reviews** - Point it at any GitHub PR and get a detailed review in seconds
+- 🌳 **Local branch diffs** - Review changes before you even open a PR, fully offline
+- 🧠 **Deep mode** - Optionally clones the repo and explores cross-file impacts
+- 💬 **Post to GitHub** - Adds review comments directly on the PR (as pending, so you stay in control)
+- 📄 **HTML reports** - Generates standalone diff reports with inline annotations
+  
 
 <img width="1727" height="1008" alt="codereview output showing annotated diff with findings" src="https://github.com/user-attachments/assets/e91bee0a-2241-43aa-aea0-4fdafa3fae63" />
+
+*Example: Output from running codereview on a PR. Summary, severity counts, and findings with file:line and description.*
 
 ## Getting started
 
