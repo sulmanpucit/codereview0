@@ -49,60 +49,60 @@ codereview https://github.com/owner/repo/pull/123 --model sonnet
 
 ### Review local branches
 
-Compare two local branches without creating a PR. Works offline -- no GitHub access needed.
+Review the diff between two branches without opening a PR — same idea as a PR review (what changed in branch A vs branch B), but using your local repo. No GitHub access needed; works offline.
+
+**Syntax:** `codereview branch <base> <compare>`
+
+- **base** — the branch you're comparing against (e.g. `main`, `rc`). "What we're branching from."
+- **compare** — the branch with the new work. "The branch we want reviewed."
+
+So `codereview branch rc-branch feature/login-refactor` means: _review the changes in `feature/login-refactor` that aren't in `rc-branch`_ — the same direction as a typical PR (rc-branch ← feature branch).
 
 ```bash
-# Review changes between two branches
-codereview branch main feature/login-refactor
+# Two branches: review feature/login-refactor relative to main
+codereview branch rc-branch feature/login-refactor
 
-# Review a feature branch against the default branch (auto-detects main/master)
+# One branch: review your current feature branch vs main (base auto-detected as main or master)
 codereview branch feature/login-refactor
 
-# Deep review using local repo (no clone needed, faster than PR deep review)
-codereview branch main feature/login-refactor --deep
-
-# Generate HTML report for local branch diff
-codereview branch main feature/login-refactor --html
-
-# All review modes work with local branches
-codereview branch rc feature/login-refactor --mode strict
+# With options (same flags as PR reviews)
+codereview branch rc-branch feature/login-refactor --deep
+codereview branch rc-branch feature/login-refactor --html
+codereview branch rc-branch feature/login-refactor --mode strict
 ```
 
-When only one branch is provided, the base branch is auto-detected by checking for `main`, then `master`.
-
-The local branch diff uses merge-base semantics (`git diff base...compare`), matching how GitHub compares branches in a PR.
+The diff uses merge-base semantics (`git diff base...compare`), so the result matches what GitHub would show for the same two branches in a PR.
 
 ## CLI Options
 
 ### Shared options (PR and branch)
 
-| Flag | Description |
-|------|-------------|
-| `--quick` | Quick review: analyze diff only (default) |
-| `--deep` | Deep review: clone repo (PR) or use local repo (branch) for cross-file impacts |
-| `--verbose` | Show debug info including timing, model, and token counts |
-| `--model <id>` | Claude model to use (e.g., `sonnet`, `opus`, `haiku`, or full model ID) |
-| `--mode <mode>` | Review mode: `balanced` (default), `strict`, `detailed`, or `lenient` |
-| `--html` | Generate standalone HTML diff report with inline finding annotations |
+| Flag            | Description                                                                    |
+| --------------- | ------------------------------------------------------------------------------ |
+| `--quick`       | Quick review: analyze diff only (default)                                      |
+| `--deep`        | Deep review: clone repo (PR) or use local repo (branch) for cross-file impacts |
+| `--verbose`     | Show debug info including timing, model, and token counts                      |
+| `--model <id>`  | Claude model to use (e.g., `sonnet`, `opus`, `haiku`, or full model ID)        |
+| `--mode <mode>` | Review mode: `balanced` (default), `strict`, `detailed`, or `lenient`          |
+| `--html`        | Generate standalone HTML diff report with inline finding annotations           |
 
 ### PR-only options
 
-| Flag | Description |
-|------|-------------|
+| Flag     | Description                       |
+| -------- | --------------------------------- |
 | `--post` | Post review as GitHub PR comments |
 
 ## Review Modes
 
-| Mode | Description |
-|------|-------------|
-| `balanced` | Default. Skips nitpicks, good signal-to-noise ratio |
-| `strict` | Bugs and security issues only, nothing else |
+| Mode       | Description                                           |
+| ---------- | ----------------------------------------------------- |
+| `balanced` | Default. Skips nitpicks, good signal-to-noise ratio   |
+| `strict`   | Bugs and security issues only, nothing else           |
 | `detailed` | Thorough review including all categories and nitpicks |
-| `lenient` | No nitpicks, higher bar for suggestions |
+| `lenient`  | No nitpicks, higher bar for suggestions               |
 
 When using `--post`, the tool creates PENDING reviews on GitHub. You still need to submit them manually through the GitHub UI, so nothing gets posted without your approval.
 
 ## Example Output
 
 <img width="1727" height="1008" alt="Screenshot 2026-02-27 at 10 12 04" src="https://github.com/user-attachments/assets/e91bee0a-2241-43aa-aea0-4fdafa3fae63" />
-
