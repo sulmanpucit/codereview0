@@ -1,17 +1,17 @@
 # codereview
 
-AI-powered GitHub PR code review using Claude. Explores the full codebase to catch issues a surface-level diff review would miss.
+AI-powered code review using Claude. Reviews GitHub PRs or local branch diffs, exploring the full codebase to catch issues a surface-level diff review would miss.
 
 ## Installation
 
-Requires Node.js 22+, [Claude CLI](https://docs.anthropic.com/en/docs/claude-code), and [`gh` CLI](https://cli.github.com) authenticated.
+Requires Node.js 22+ and [Claude CLI](https://docs.anthropic.com/en/docs/claude-code). GitHub PR reviews additionally require [`gh` CLI](https://cli.github.com) authenticated.
 
 Verify prerequisites:
 
 ```bash
 node --version    # Must be 22+
-gh auth status    # Must be authenticated
 claude --version  # Must be installed with Anthropic API key
+gh auth status    # Required only for PR reviews (not local branch reviews)
 ```
 
 ```bash
@@ -24,6 +24,8 @@ codereview --version  # Verify install
 ```
 
 ## Usage
+
+### Review a GitHub PR
 
 ```bash
 # Quick review (diff-only, default)
@@ -45,17 +47,49 @@ codereview https://github.com/owner/repo/pull/123 --mode strict
 codereview https://github.com/owner/repo/pull/123 --model sonnet
 ```
 
+### Review local branches
+
+Compare two local branches without creating a PR. Works offline -- no GitHub access needed.
+
+```bash
+# Review changes between two branches
+codereview branch main feature/login-refactor
+
+# Review a feature branch against the default branch (auto-detects main/master)
+codereview branch feature/login-refactor
+
+# Deep review using local repo (no clone needed, faster than PR deep review)
+codereview branch main feature/login-refactor --deep
+
+# Generate HTML report for local branch diff
+codereview branch main feature/login-refactor --html
+
+# All review modes work with local branches
+codereview branch rc feature/login-refactor --mode strict
+```
+
+When only one branch is provided, the base branch is auto-detected by checking for `main`, then `master`.
+
+The local branch diff uses merge-base semantics (`git diff base...compare`), matching how GitHub compares branches in a PR.
+
 ## CLI Options
+
+### Shared options (PR and branch)
 
 | Flag | Description |
 |------|-------------|
 | `--quick` | Quick review: analyze diff only (default) |
-| `--deep` | Deep review: clone repo and explore codebase for cross-file impacts |
-| `--post` | Post review as GitHub PR comments |
+| `--deep` | Deep review: clone repo (PR) or use local repo (branch) for cross-file impacts |
 | `--verbose` | Show debug info including timing, model, and token counts |
 | `--model <id>` | Claude model to use (e.g., `sonnet`, `opus`, `haiku`, or full model ID) |
 | `--mode <mode>` | Review mode: `balanced` (default), `strict`, `detailed`, or `lenient` |
 | `--html` | Generate standalone HTML diff report with inline finding annotations |
+
+### PR-only options
+
+| Flag | Description |
+|------|-------------|
+| `--post` | Post review as GitHub PR comments |
 
 ## Review Modes
 

@@ -64,6 +64,20 @@ describe('printPRSummary', () => {
     const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
     expect(output).toContain('2 files changed');
   });
+
+  it('skips PR number display when number is 0 (local branch review)', () => {
+    const localPR: PRData = { ...mockPR, number: 0 };
+    printPRSummary(localPR);
+    const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+    expect(output).not.toContain('#0');
+    expect(output).toContain('testauthor');
+  });
+
+  it('shows PR number when number is positive', () => {
+    printPRSummary(mockPR);
+    const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+    expect(output).toContain('#42');
+  });
 });
 
 describe('printErrors', () => {

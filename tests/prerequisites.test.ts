@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { checkPrerequisites } from '../src/prerequisites.js';
+import { checkPrerequisites, checkLocalPrerequisites } from '../src/prerequisites.js';
 
 vi.mock('node:child_process', () => ({
   execFileSync: vi.fn(),
@@ -126,6 +126,71 @@ describe('checkPrerequisites', () => {
     const claudeFailure = failures.find((f) => f.name === 'claude');
 
     expect(ghFailure?.help).toContain('https://cli.github.com');
+    expect(claudeFailure?.help).toContain('https://docs.anthropic.com');
+  });
+});
+
+describe('checkLocalPrerequisites', () => {
+  it('returns empty array when git and claude exist', () => {
+    mockedExecFileSync.mockReturnValue(Buffer.from(''));
+    const failures = checkLocalPrerequisites();
+    expect(failures).toEqual([]);
+  });
+
+  it('reports git missing when which git fails', () => {
+    mockedExecFileSync.mockImplementation((_cmd, args) => {
+      const argsArr = args as string[];
+      if (argsArr[0] === 'git') throw new Error('not found');
+      return Buffer.from('');
+    });
+
+    const failures = checkLocalPrerequisites();
+    expect(failures).toContainEqual(
+      expect.objectContaining({ name: 'git', message: 'git CLI not found' }),
+    );
+  });
+
+  it('reports claude missing when which claude fails', () => {
+    mockedExecFileSync.mockImplementation((_cmd, args) => {
+      const argsArr = args as string[];
+      if (argsArr[0] === 'claude') throw new Error('not found');
+      return Buffer.from('');
+    });
+
+    const failures = checkLocalPrerequisites();
+    expect(failures).toContainEqual(
+      expect.objectContaining({ name: 'claude', message: 'claude CLI not found' }),
+    );
+  });
+
+  it('does not check gh CLI or gh auth', () => {
+    mockedExecFileSync.mockReturnValue(Buffer.from(''));
+    const failures = checkLocalPrerequisites();
+    expect(failures.find(f => f.name === 'gh')).toBeUndefined();
+    expect(failures.find(f => f.name === 'gh-auth')).toBeUndefined();
+  });
+
+  it('collects both git and claude failures', () => {
+    mockedExecFileSync.mockImplementation(() => {
+      throw new Error('not found');
+    });
+
+    const failures = checkLocalPrerequisites();
+    expect(failures).toHaveLength(2);
+    expect(failures[0].name).toBe('git');
+    expect(failures[1].name).toBe('claude');
+  });
+
+  it('includes actionable help text', () => {
+    mockedExecFileSync.mockImplementation(() => {
+      throw new Error('not found');
+    });
+
+    const failures = checkLocalPrerequisites();
+    const gitFailure = failures.find(f => f.name === 'git');
+    const claudeFailure = failures.find(f => f.name === 'claude');
+
+    expect(gitFailure?.help).toContain('https://git-scm.com');
     expect(claudeFailure?.help).toContain('https://docs.anthropic.com');
   });
 });

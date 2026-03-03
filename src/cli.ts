@@ -1,7 +1,7 @@
 import { Command, Option } from 'commander';
 import pc from 'picocolors';
 import { parsePRUrl } from './url-parser.js';
-import { checkPrerequisites } from './prerequisites.js';
+import { checkPrerequisites, checkLocalPrerequisites } from './prerequisites.js';
 import { createOctokit, fetchPRData, postReview } from './github.js';
 import { printPRSummary, printErrors, printDebug, printModel, printMode, printMeta, formatDuration, estimateTokens, printProgress, printProgressDone, printAnalysisSummary, printFindings } from './output.js';
 import { buildPrompt, type ReviewMode } from './prompt.js';
@@ -15,6 +15,10 @@ import { generateHtmlReport, openInBrowser } from './html-report.js';
 import { rmSync, existsSync } from 'node:fs';
 import type { PRData, ParsedPR } from './types.js';
 import type { ReviewFinding } from './schemas.js';
+import { buildLocalPRData, detectDefaultBranch, hasUncommittedChanges } from './local-diff.js';
+
+/** Exit code for local branch errors (missing branch, not a git repo, etc.) */
+const EXIT_LOCAL_ERROR = 5;
 
 /** Track active clone path for cleanup on error/SIGINT */
 let activeClonePath: string | null = null;
@@ -29,30 +33,46 @@ function cleanupOnExit(): void {
 
 process.on('SIGINT', () => { cleanupOnExit(); process.exit(130); });
 
+/** Shared review options used by both PR and branch commands */
+interface ReviewOptions {
+  verbose?: boolean;
+  quick?: boolean;
+  deep?: boolean;
+  post?: boolean;
+  html?: boolean;
+  model?: string;
+  mode: ReviewMode;
+}
+
+/** GitHub context for posting reviews back to a PR. Absent for local branch reviews. */
+interface GitHubContext {
+  parsed: ParsedPR;
+  octokit: ReturnType<typeof createOctokit>;
+}
+
 /**
  * Shared post-analysis flow: terminal output, HTML report, verbose counts, GitHub review posting.
- * Called from both deep and quick mode branches after findings are obtained.
+ * Called from both PR and branch review flows after findings are obtained.
+ *
+ * When githubCtx is provided, --post will attempt to post the review to GitHub.
+ * When absent (local branch review), --post is a no-op.
  */
 async function handlePostAnalysis(
   findings: ReviewFinding[],
   prData: PRData,
-  parsed: ParsedPR,
-  octokit: ReturnType<typeof createOctokit>,
-  options: { verbose?: boolean; post?: boolean; html?: boolean },
+  options: ReviewOptions,
+  githubCtx?: GitHubContext,
 ): Promise<void> {
-  // Terminal output (always shown)
   printAnalysisSummary(findings);
   printFindings(findings);
 
-  // Generate HTML report (if requested)
   if (options.html) {
-    const reportFile = generateHtmlReport(prData, findings, parsed);
+    const reportFile = generateHtmlReport(prData, findings, githubCtx?.parsed);
     openInBrowser(reportFile);
   }
 
-  // Finding counts debug
   if (options.verbose) {
-    if (options.post) {
+    if (options.post && githubCtx) {
       const diffHunks = parseDiffHunks(prData.diff);
       const { inline, offDiff } = partitionFindings(findings, diffHunks);
       const posted = inline.length + (offDiff.length > 0 ? 1 : 0);
@@ -62,8 +82,7 @@ async function handlePostAnalysis(
     }
   }
 
-  // Post review to GitHub (only with --post and non-zero findings)
-  if (options.post && findings.length > 0) {
+  if (options.post && githubCtx && findings.length > 0) {
     try {
       const postStart = performance.now();
       printProgress('Posting review to GitHub...');
@@ -79,10 +98,10 @@ async function handlePostAnalysis(
       }));
 
       const reviewUrl = await postReview(
-        octokit,
-        parsed.owner,
-        parsed.repo,
-        parsed.prNumber,
+        githubCtx.octokit,
+        githubCtx.parsed.owner,
+        githubCtx.parsed.repo,
+        githubCtx.parsed.prNumber,
         prData.headSha,
         reviewBody,
         comments,
@@ -95,40 +114,80 @@ async function handlePostAnalysis(
         printDebug(`Post: ${formatDuration(postDuration)}`);
       }
     } catch (error: unknown) {
-      console.log(); // newline after progress message
+      console.log();
       console.error(pc.yellow('\u26A0 Failed to post review to GitHub'));
       console.error(pc.dim('  ' + sanitizeError(error)));
     }
   }
 }
 
+/**
+ * Run the quick review flow: analyze diff only.
+ * Shared between PR and branch commands.
+ */
+async function runQuickReview(
+  prData: PRData,
+  options: ReviewOptions,
+): Promise<ReviewFinding[]> {
+  const quickPrompt = buildPrompt(prData, options.mode);
+  const analyzeStart = performance.now();
+  try {
+    printProgress('Analyzing diff...');
+    const result = await analyzeDiff(prData, options.model, options.mode);
+    printProgressDone();
+
+    const analyzeDuration = performance.now() - analyzeStart;
+    printModel(result.model);
+
+    if (options.verbose) {
+      printDebug(`Analyze: ${formatDuration(analyzeDuration)}, prompt ${estimateTokens(quickPrompt.length)}`);
+    }
+    return result.findings;
+  } catch (error: unknown) {
+    console.log();
+    console.error(pc.red('Analysis failed'));
+    console.error(sanitizeError(error));
+    process.exit(EXIT_ANALYSIS_ERROR);
+  }
+}
+
+/**
+ * Add shared review options to a Commander command.
+ * Keeps option definitions consistent between PR and branch commands.
+ */
+function addSharedOptions(cmd: Command): Command {
+  return cmd
+    .option('--verbose', 'Show debug info: model, timing, prompt size, finding counts')
+    .option('--quick', 'Quick review: analyze diff only (default)')
+    .option('--deep', 'Deep review: clone repo (PR) or use local repo (branch) for cross-file impacts')
+    .option('--html', 'Generate HTML report and open in browser')
+    .option('--model <model-id>', 'Claude model to use (e.g., sonnet, opus, haiku, or full model ID)')
+    .addOption(
+      new Option('--mode <mode>', 'Review mode: strict, detailed, lenient, balanced')
+        .choices(['strict', 'detailed', 'lenient', 'balanced'])
+        .default('balanced')
+    );
+}
+
 const program = new Command();
 
 program
   .name('codereview')
-  .description('AI-powered GitHub PR code review')
-  .version('0.1.0')
+  .description('AI-powered code review using Claude')
+  .version('0.1.0');
+
+// --- Default command: codereview <pr-url> ---
+
+addSharedOptions(program)
   .argument('<pr-url>', 'GitHub Pull Request URL')
-  .option('--verbose', 'Show debug info: model, timing, prompt size, finding counts')
-  .option('--quick', 'Quick review: analyze diff only (default)')
-  .option('--deep', 'Deep review: clone repo and explore codebase for cross-file impacts')
   .option('--post', 'Post review to GitHub PR')
-  .option('--html', 'Generate HTML report and open in browser')
-  .option('--model <model-id>', 'Claude model to use (e.g., sonnet, opus, haiku, or full model ID)')
-  .addOption(
-    new Option('--mode <mode>', 'Review mode: strict, detailed, lenient, balanced')
-      .choices(['strict', 'detailed', 'lenient', 'balanced'])
-      .default('balanced')
-  )
-  .action(async (prUrl: string, options: { verbose?: boolean; quick?: boolean; deep?: boolean; post?: boolean; html?: boolean; model?: string; mode: ReviewMode }) => {
-    // 1. Check prerequisites (collect all failures, report at once)
+  .action(async (prUrl: string, options: ReviewOptions) => {
     const failures = checkPrerequisites();
     if (failures.length > 0) {
       printErrors(failures);
       process.exit(EXIT_PREREQ);
     }
 
-    // 2. Parse PR URL
     const parsed = parsePRUrl(prUrl);
     if (!parsed) {
       console.error(pc.red('\u2716 Invalid PR URL: ' + prUrl));
@@ -136,7 +195,6 @@ program
       process.exit(EXIT_INVALID_URL);
     }
 
-    // 3. Fetch PR data with progress and timing
     let prData;
     const octokit = createOctokit();
     const fetchStart = performance.now();
@@ -145,7 +203,7 @@ program
       prData = await fetchPRData(octokit, parsed.owner, parsed.repo, parsed.prNumber);
       printProgressDone();
     } catch (error: unknown) {
-      console.log(); // newline after progress message
+      console.log();
       console.error(pc.red('\u2716 Failed to fetch PR data'));
       console.error(pc.dim('  ' + sanitizeError(error)));
       process.exit(EXIT_API_ERROR);
@@ -155,19 +213,16 @@ program
       printDebug(`Fetch: ${formatDuration(fetchDuration)}`);
     }
 
-    // Print PR summary so user sees what they're reviewing while waiting for analysis
     printPRSummary(prData);
     printMode(options.mode);
     if (options.verbose) {
       printDebug(`Mode: ${options.mode}`);
     }
 
+    const githubCtx: GitHubContext = { parsed, octokit };
     let findings;
 
     if (options.deep) {
-      // Deep mode: clone -> agentic review (or fallback to quick if clone fails)
-
-      // 4a. Clone repository
       let cloneSucceeded = false;
       const clonePath = getClonePath(prData.headRepoName);
       activeClonePath = clonePath;
@@ -179,7 +234,7 @@ program
         printProgressDone();
         cloneSucceeded = true;
       } catch (error: unknown) {
-        console.log(); // newline after progress message
+        console.log();
         console.error(pc.yellow('Warning: Could not clone repo -- falling back to quick review'));
         console.error(pc.dim('  ' + sanitizeError(error)));
       }
@@ -189,7 +244,6 @@ program
       }
 
       if (cloneSucceeded) {
-        // 4b. Agentic review (single-pass deep analysis)
         console.log(pc.dim('Running deep review...'));
         const analyzeStart = performance.now();
         const result = await analyzeAgentic(prData, clonePath, options.model, options.mode, options.verbose);
@@ -203,33 +257,11 @@ program
           }
         }
       } else {
-        // 4c. Fallback to quick review (clone failed)
-        const quickPrompt = buildPrompt(prData, options.mode);
-        const analyzeStart = performance.now();
-        try {
-          printProgress('Analyzing diff...');
-          const result = await analyzeDiff(prData, options.model, options.mode);
-          printProgressDone();
-          findings = result.findings;
-
-          const analyzeDuration = performance.now() - analyzeStart;
-          printModel(result.model);
-
-          if (options.verbose) {
-            printDebug(`Analyze: ${formatDuration(analyzeDuration)}, prompt ${estimateTokens(quickPrompt.length)}`);
-          }
-        } catch (error: unknown) {
-          console.log(); // newline after progress message
-          console.error(pc.red('Analysis failed'));
-          console.error(sanitizeError(error));
-          process.exit(EXIT_ANALYSIS_ERROR);
-        }
+        findings = await runQuickReview(prData, options);
       }
 
-      // 5. Shared post-analysis: terminal output, HTML report, verbose counts, GitHub post
-      await handlePostAnalysis(findings, prData, parsed, octokit, options);
+      await handlePostAnalysis(findings, prData, options, githubCtx);
 
-      // 6. Cleanup cloned repo (only if clone succeeded)
       if (cloneSucceeded) {
         try {
           await promptCleanup(clonePath);
@@ -238,42 +270,110 @@ program
         }
       }
       } finally {
-        // Safety net: clean up clone directory on any error path that bypasses promptCleanup
         if (activeClonePath && existsSync(activeClonePath)) {
           try { rmSync(activeClonePath, { recursive: true, force: true }); } catch { /* best-effort */ }
         }
         activeClonePath = null;
       }
     } else {
-      // Quick mode (default): analyze diff only
+      findings = await runQuickReview(prData, options);
+      await handlePostAnalysis(findings, prData, options, githubCtx);
+    }
+  });
 
-      // 4. Analyze diff with progress and timing
-      const quickPrompt = buildPrompt(prData, options.mode);
+// --- Branch subcommand: codereview branch <base> [compare] ---
+
+const branchCmd = program
+  .command('branch')
+  .description('Review differences between two local branches')
+  .argument('<base>', 'Base branch (e.g., main, rc)')
+  .argument('[compare]', 'Compare branch (defaults to default branch when base is a feature branch)');
+
+addSharedOptions(branchCmd)
+  .action(async (base: string, compare: string | undefined, options: ReviewOptions) => {
+    const failures = checkLocalPrerequisites();
+    if (failures.length > 0) {
+      printErrors(failures);
+      process.exit(EXIT_PREREQ);
+    }
+
+    let baseBranch: string;
+    let compareBranch: string;
+
+    if (compare) {
+      baseBranch = base;
+      compareBranch = compare;
+    } else {
+      // Single argument: treat it as the compare branch, auto-detect base
+      compareBranch = base;
+      try {
+        baseBranch = detectDefaultBranch();
+        console.log(pc.dim(`Base branch: ${baseBranch} (auto-detected)`));
+      } catch (error: unknown) {
+        console.error(pc.red('\u2716 ' + (error instanceof Error ? error.message : String(error))));
+        process.exit(EXIT_LOCAL_ERROR);
+      }
+    }
+
+    if (hasUncommittedChanges()) {
+      console.log(pc.yellow('Warning: You have uncommitted changes. They will not be included in the review.'));
+    }
+
+    let prData: PRData;
+    const fetchStart = performance.now();
+    try {
+      printProgress('Generating local diff...');
+      prData = await buildLocalPRData(baseBranch, compareBranch);
+      printProgressDone();
+    } catch (error: unknown) {
+      console.log();
+      console.error(pc.red('\u2716 ' + (error instanceof Error ? error.message : String(error))));
+      process.exit(EXIT_LOCAL_ERROR);
+    }
+    const fetchDuration = performance.now() - fetchStart;
+    if (options.verbose) {
+      printDebug(`Diff: ${formatDuration(fetchDuration)}`);
+    }
+
+    if (!prData.diff.trim()) {
+      console.log(pc.dim('No differences found between branches.'));
+      process.exit(0);
+    }
+
+    printPRSummary(prData);
+    printMode(options.mode);
+    if (options.verbose) {
+      printDebug(`Mode: ${options.mode}`);
+    }
+
+    let findings;
+
+    if (options.deep) {
+      // Deep mode for local branches: no clone needed, use the current working directory
+      const repoRoot = process.cwd();
+      console.log(pc.dim('Running deep review (local repo)...'));
       const analyzeStart = performance.now();
       try {
-        printProgress('Analyzing diff...');
-        const result = await analyzeDiff(prData, options.model, options.mode);
-        printProgressDone();
-        findings = result.findings;
-
+        const result = await analyzeAgentic(prData, repoRoot, options.model, options.mode, options.verbose);
         const analyzeDuration = performance.now() - analyzeStart;
-
-        // Model line always visible
+        findings = result.findings;
         printModel(result.model);
-
         if (options.verbose) {
-          printDebug(`Analyze: ${formatDuration(analyzeDuration)}, prompt ${estimateTokens(quickPrompt.length)}`);
+          printDebug(`Analyze (deep): ${formatDuration(analyzeDuration)}`);
+          if (result.meta) {
+            printMeta(result.meta);
+          }
         }
       } catch (error: unknown) {
-        console.log(); // newline after progress message
-        console.error(pc.red('Analysis failed'));
+        console.error(pc.red('Deep analysis failed'));
         console.error(sanitizeError(error));
         process.exit(EXIT_ANALYSIS_ERROR);
       }
-
-      // 5. Shared post-analysis: terminal output, HTML report, verbose counts, GitHub post
-      await handlePostAnalysis(findings, prData, parsed, octokit, options);
+    } else {
+      findings = await runQuickReview(prData, options);
     }
+
+    await handlePostAnalysis(findings, prData, options);
   });
 
 program.parse();

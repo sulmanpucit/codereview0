@@ -10,9 +10,10 @@ export function printPRSummary(pr: PRData): void {
   // Title
   console.log(pc.bold(pr.title));
 
-  // Metadata line: #number author headBranch -> baseBranch
+  // Metadata line: #number author headBranch -> baseBranch (skip #0 for local reviews)
+  const numberTag = pr.number > 0 ? pc.dim(`#${pr.number} `) : '';
   console.log(
-    `${pc.dim(`#${pr.number}`)} ${pc.cyan(pr.author)} ${pc.dim(`${pr.headBranch} -> ${pr.baseBranch}`)}`,
+    `${numberTag}${pc.cyan(pr.author)} ${pc.dim(`${pr.headBranch} -> ${pr.baseBranch}`)}`,
   );
 
   // Stats line: +additions -deletions N files changed

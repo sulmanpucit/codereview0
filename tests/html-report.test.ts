@@ -277,6 +277,37 @@ describe('generateHtmlReport', () => {
 
     expect(console.log).toHaveBeenCalledWith('Report saved: ./codereview-repo-42.html');
   });
+
+  it('uses branch-based filename when parsed is omitted', () => {
+    const prData = makePRData({ headBranch: 'feature/login', baseBranch: 'main' });
+    const findings: ReviewFinding[] = [];
+
+    const result = generateHtmlReport(prData, findings);
+
+    expect(result).toBe('codereview-feature-login-vs-main.html');
+    expect(writeFileSync).toHaveBeenCalledTimes(1);
+  });
+
+  it('sanitizes branch names with special chars for filename', () => {
+    const prData = makePRData({ headBranch: 'feat/my branch!', baseBranch: 'rc/2.0' });
+    const findings: ReviewFinding[] = [];
+
+    const result = generateHtmlReport(prData, findings);
+
+    expect(result).toBe('codereview-feat-my-branch--vs-rc-2.0.html');
+  });
+
+  it('generates valid HTML content when parsed is omitted', () => {
+    const prData = makePRData();
+    const findings = [makeFinding()];
+
+    generateHtmlReport(prData, findings);
+
+    const html = getWrittenHtml();
+    expect(html).toContain('<!DOCTYPE html>');
+    expect(html).toContain('Add feature X');
+    expect(html).toContain('feature-x');
+  });
 });
 
 describe('openInBrowser', () => {

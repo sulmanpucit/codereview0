@@ -51,3 +51,36 @@ export function checkPrerequisites(): PrereqFailure[] {
 
   return failures;
 }
+
+/**
+ * Check prerequisites for local branch review (no GitHub needed).
+ *
+ * Checks: git CLI existence, claude CLI existence.
+ * Does NOT check gh CLI or gh auth -- local reviews use only git.
+ */
+export function checkLocalPrerequisites(): PrereqFailure[] {
+  const failures: PrereqFailure[] = [];
+  const whichCmd = process.platform === 'win32' ? 'where' : 'which';
+
+  try {
+    execFileSync(whichCmd, ['git'], { stdio: 'pipe' });
+  } catch {
+    failures.push({
+      name: 'git',
+      message: 'git CLI not found',
+      help: 'Install it: https://git-scm.com/downloads',
+    });
+  }
+
+  try {
+    execFileSync(whichCmd, ['claude'], { stdio: 'pipe' });
+  } catch {
+    failures.push({
+      name: 'claude',
+      message: 'claude CLI not found',
+      help: 'Install it: https://docs.anthropic.com/en/docs/claude-code',
+    });
+  }
+
+  return failures;
+}

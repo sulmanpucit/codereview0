@@ -66,6 +66,11 @@ function buildFindingMap(findings: ReviewFinding[], filename: string): Map<numbe
   return map;
 }
 
+/** Replace characters unsafe for filenames with dashes */
+function sanitizeForFilename(name: string): string {
+  return name.replace(/[^a-zA-Z0-9._-]/g, '-');
+}
+
 /** Get CSS class for severity badge */
 function severityBadgeClass(severity: string): string {
   switch (severity) {
@@ -339,7 +344,7 @@ const CSS = `
  *
  * @returns The filename of the written HTML file
  */
-export function generateHtmlReport(prData: PRData, findings: ReviewFinding[], parsed: ParsedPR): string {
+export function generateHtmlReport(prData: PRData, findings: ReviewFinding[], parsed?: ParsedPR): string {
   // 1. Parse the raw diff into structured file/line data
   const diffFiles = parseDetailedDiff(prData.diff);
 
@@ -376,7 +381,9 @@ export function generateHtmlReport(prData: PRData, findings: ReviewFinding[], pa
 </html>`;
 
   // 4. Write to file
-  const filename = `codereview-${parsed.repo}-${parsed.prNumber}.html`;
+  const filename = parsed
+    ? `codereview-${parsed.repo}-${parsed.prNumber}.html`
+    : `codereview-${sanitizeForFilename(prData.headBranch)}-vs-${sanitizeForFilename(prData.baseBranch)}.html`;
   writeFileSync(resolve(filename), html, 'utf-8');
 
   // 5. Print to terminal
